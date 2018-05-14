@@ -1,0 +1,191 @@
+---
+title: "Clustering Grocery Items"
+author: "Mitul Shah"
+date: "8/16/2017"
+output: pdf_document
+---
+
+
+```{r}
+
+## Loading the libraries
+library(magrittr)
+library(dplyr)
+
+## Loading datasets
+item_to_id <- read.csv("grocery/item_to_id.csv")
+data <- read.csv("grocery/purchase_history.csv")
+
+## Order the datasets 
+item_to_id <- item_to_id %>% arrange(Item_id)
+data <- data %>% arrange(user_id)
+
+## Loading splitstackshape
+library(splitstackshape)
+
+## Creating dat
+dat <- cSplit(data, "id", ",")
+
+## Removing user id column
+dat <- select(dat, -1)
+
+## Creating grocery dataset
+grocery <- data.frame(matrix(nrow = 39474, ncol = 48))
+
+## Renaming columns to items
+colnames(grocery) <- item_to_id$Item_id
+
+## Create x as sequence from 1 to 48
+x <- seq(1,48,1)
+
+## Enter 1 if the transaction had that item and 0 if that item was not in the transaction
+for(i in 1:nrow(dat)) {
+  for(j in 1:ncol(dat)) {
+    if( (dat[[i,j]] %in% x) == TRUE) {
+      y <- dat[[i, j]]
+      grocery[[i, y]] = 1
+    } else {
+      grocery[[i, y]] = 0
+    }
+  }
+}
+
+## Enter 1 if the transaction had that item and 0 if that item was not in the transaction
+#for(i in 1:nrow(dat)) {
+#  for(j in 1:ncol(dat)) {
+#   if(is.na(dat[[i,j]]) == FALSE)  {
+#      y <- dat[[i, j]]
+#      grocery[[i, y]] = 1
+#    } else {
+#      grocery[[i, y]] = 0
+#    } 
+#  }
+#}
+
+grocery[grocery == 0] <- 1
+grocery[is.na(grocery)] <- 0
+
+## Renaming columns to Item name
+colnames(grocery) <- item_to_id$Item_name
+
+
+```
+
+
+## Forming Clusters of Grocery Items
+
+```{r}
+
+## Transpose grocery data
+grocery_data_to_cluster <- as.data.frame(t(grocery))
+
+## Distance matrix
+grocery.dist <- dist(grocery_data_to_cluster, method = "euclidean", diag = FALSE, upper = FALSE, p = 2)
+
+## Hierarchical Clustering using Ward's method
+grocery.hclust <- hclust(grocery.dist, method = "ward.D")
+
+## Visualize the dendogram
+plot(grocery.hclust, labels = item_to_id$Item_name, main='Dendogram')
+
+
+```
+
+Looking at the dendogram, grouping items into 12 clusters seems to be a good number. 
+
+```{r}
+
+## Forming 12 clusters
+groups.12 <- cutree(grocery.hclust, 12)
+
+## Looking at the items in all 12 clusters
+sapply(unique(groups.12), function(g)item_to_id$Item_name[groups.12 == g])
+
+## Comparing results with k-means forming 12 clusters
+kmeans(grocery_data_to_cluster, 12, alg="Lloyd")[[1]]
+```
+
+
+The clusters formed by hierarchical clustering (Ward's method) seems to be better than the results shown by k-means clustering by looking at the names of the items in clusters. The results of k-means groups has 1 cluster with many items which doesn't look good to me. However, we might obtain better clusters by using k-mediods (using PAM) or using other linkage methods like single or complete linkage in hierarchical clustering. Looking at the above results, I would group the items by the results given by hierarchical clustering. 
+
+## Finding customers who bought most items in her lifetime
+
+```{r}
+
+## Merge user id with grocery
+data_with_users <- as.data.frame(cbind(data$user_id, grocery))
+
+## Rename 1st column to user id
+colnames(data_with_users)[1] <- "user_id"
+
+## Data giving number of items bought by each customer in each transaction
+data_to_find_customers_buying_most_items <- data_with_users %>% mutate(total_items_in_each_transaction = rowSums(.[2:49]))
+
+## Grouping by customer
+number_of_items_by_customer <- data_to_find_customers_buying_most_items %>% group_by(user_id) %>% summarise(total_items = sum(total_items_in_each_transaction))
+
+## Finding maxiumum items bought by any customer
+max(number_of_items_by_customer$total_items)
+
+## The user id of the customer who bought most items 
+filter(number_of_items_by_customer, total_items == 72)
+
+```
+
+
+The customer who bought the maximum items in her lifetime has the user id 269335. 
+
+
+## Finding for each item, the customer who bought that product the most
+
+```{r}
+
+## Data giving how many times each user bought each item in all transactions
+d <- data_with_users %>% group_by(user_id) %>% summarise_all(funs(sum))
+
+## Creating data to show the customer who buys that item most number of times 
+most_buying_customer_for_each_item <- data.frame(matrix(nrow = 48, ncol = 81))
+
+## Renaming columns 
+colnames(most_buying_customer_for_each_item) <- c("Item_name", paste0( "user_id_", 1:80))
+
+## 1st column as the name of the item 
+most_buying_customer_for_each_item$Item_name <- item_to_id$Item_name
+
+for(i in 2:ncol(d)) {
+  z <- max(d[,i])
+  a <- filter(d, d[,i] == z)
+  for(j in 1:nrow(a)) {
+    most_buying_customer_for_each_item[[(i-1), (j+1)]] = a[[j, 1]]
+  }
+}
+
+x <- c()
+
+## All the users (they might be repeated)
+for(i in 1:48) {
+  for(j in 2:81) {
+    y <- most_buying_customer_for_each_item[[i, j]]
+    if (is.na(y) == TRUE) {
+      x <- x
+    } else {
+      x <- c(x, y)
+    }
+  }
+}
+
+k <- c()
+
+## Unique users 
+for(i in 1:length(x)) {
+  if(x[i] %in% k == FALSE) {
+    k <- c(k, x[i])
+  } else {
+    k <- k
+  }
+}
+
+## Print all users
+k 
+```
+
